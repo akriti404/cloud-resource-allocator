@@ -1,6 +1,17 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple
-import torch
+
+
+def _default_device() -> str:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+    except ImportError:
+        return "cpu"
 
 @dataclass
 class ServerConfig:    
@@ -100,7 +111,7 @@ class Config:
     reward: RewardConfig = field(default_factory=RewardConfig)
     
     # Device configuration (auto-detect GPU)
-    device: str = field(default_factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
+    device: str = field(default_factory=_default_device)
     
     def __post_init__(self):
         """Post-initialization setup and validation."""
