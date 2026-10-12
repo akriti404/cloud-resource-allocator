@@ -191,17 +191,21 @@ def _warmup_with_teacher(agent: DQNAgent, env, teacher, warmup_episodes: int):
         return
 
     print(f"[Warmup] Collecting and learning from {warmup_episodes} guided episodes...")
-    for _ in range(warmup_episodes):
-        if hasattr(teacher, "reset"):
-            teacher.reset()
-        obs, _ = env.reset()
-        done = False
-        while not done:
-            action = teacher.select_action(obs, env)
-            next_obs, reward, done, _, _ = env.step(action)
-            agent.store(obs, action, reward, next_obs, done)
-            agent.update()
-            obs = next_obs
+    agent._freeze_epsilon = True
+    try:
+        for _ in range(warmup_episodes):
+            if hasattr(teacher, "reset"):
+                teacher.reset()
+            obs, _ = env.reset()
+            done = False
+            while not done:
+                action = teacher.select_action(obs, env)
+                next_obs, reward, done, _, _ = env.step(action)
+                agent.store(obs, action, reward, next_obs, done)
+                agent.update()
+                obs = next_obs
+    finally:
+        agent._freeze_epsilon = False
 
 def train():
 

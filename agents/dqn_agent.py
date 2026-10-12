@@ -107,9 +107,10 @@ class DQNAgent:
         self.batch_size        = batch_size
         self.tau               = 0.005
 
-        self.epsilon       = epsilon_start
-        self.epsilon_end   = epsilon_end
-        self.epsilon_decay = (epsilon_start - epsilon_end) / epsilon_decay_steps
+        self.epsilon         = epsilon_start
+        self.epsilon_end     = epsilon_end
+        self.epsilon_decay   = (epsilon_start - epsilon_end) / epsilon_decay_steps
+        self._freeze_epsilon = False  # set True during warmup to prevent premature decay
 
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -241,7 +242,9 @@ class DQNAgent:
         td_errors = (current_q - target_q).detach().cpu().numpy()
         self.memory.update_priorities(indices, td_errors)
 
-        self.epsilon = max(self.epsilon_end, self.epsilon - self.epsilon_decay)
+        # Only decay epsilon during main training, not during teacher-guided warmup
+        if not self._freeze_epsilon:
+            self.epsilon = max(self.epsilon_end, self.epsilon - self.epsilon_decay)
         self.steps  += 1
 
         # Polyak soft update of target network
