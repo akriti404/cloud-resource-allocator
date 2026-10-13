@@ -1,6 +1,10 @@
 import sys
 import os
 import logging
+import json
+import datetime
+import subprocess
+import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(
@@ -119,6 +123,7 @@ def evaluate_agent(
     rewards, cpu_utils, mem_utils = [], [], []
     cpu_per = [[] for _ in range(n_machines)]
     mem_per = [[] for _ in range(n_machines)]
+    placement_rates, breach_rates = [], []
     for _ in range(n_episodes):
         if hasattr(teacher_policy, "reset"):
             teacher_policy.reset()
@@ -142,6 +147,9 @@ def evaluate_agent(
         for i in range(n_machines):
             cpu_per[i].append(u["cpu_per_machine"][i])
             mem_per[i].append(u["mem_per_machine"][i])
+        stats = env.episode_stats()
+        placement_rates.append(stats["placement_rate"])
+        breach_rates.append(stats["breach_rate"])
     return {
         "reward_mean": np.mean(rewards),
         "reward_std":  np.std(rewards),
@@ -149,6 +157,46 @@ def evaluate_agent(
         "mem_util":    np.mean(mem_utils),
         "cpu_per_machine": [np.mean(cpu_per[i]) for i in range(n_machines)],
         "mem_per_machine": [np.mean(mem_per[i]) for i in range(n_machines)],
+        "placement_rate_mean": float(np.mean(placement_rates)),
+        "breach_rate_mean":    float(np.mean(breach_rates)),
+    }
+
+
+def evaluate_agent_pure(agent, dataset_loader, n_episodes=20, seed=42, cfg=None):
+    dataset_loader.reset()
+    env = make_env(seed=seed, dataset_loader=dataset_loader)
+    n_machines = CONFIG["n_machines"]
+    rewards, cpu_utils, mem_utils = [], [], []
+    cpu_per = [[] for _ in range(n_machines)]
+    mem_per = [[] for _ in range(n_machines)]
+    placement_rates, breach_rates = [], []
+    for _ in range(n_episodes):
+        obs, _ = env.reset()
+        ep_reward = 0.0
+        done = False
+        while not done:
+            action = agent.select_action(obs, valid_actions=_valid_actions(env), explore=False)
+            obs, reward, done, _, _ = env.step(action)
+            ep_reward += reward
+        rewards.append(ep_reward)
+        u = env.utilization()
+        cpu_utils.append(u["cpu"])
+        mem_utils.append(u["mem"])
+        for i in range(n_machines):
+            cpu_per[i].append(u["cpu_per_machine"][i])
+            mem_per[i].append(u["mem_per_machine"][i])
+        stats = env.episode_stats()
+        placement_rates.append(stats["placement_rate"])
+        breach_rates.append(stats["breach_rate"])
+    return {
+        "reward_mean": np.mean(rewards),
+        "reward_std":  np.std(rewards),
+        "cpu_util":    np.mean(cpu_utils),
+        "mem_util":    np.mean(mem_utils),
+        "cpu_per_machine": [np.mean(cpu_per[i]) for i in range(n_machines)],
+        "mem_per_machine": [np.mean(mem_per[i]) for i in range(n_machines)],
+        "placement_rate_mean": float(np.mean(placement_rates)),
+        "breach_rate_mean":    float(np.mean(breach_rates)),
     }
 
 
@@ -159,6 +207,7 @@ def evaluate_baseline(baseline, dataset_loader, n_episodes: int = 50) -> dict:
     rewards, cpu_utils, mem_utils = [], [], []
     cpu_per = [[] for _ in range(n_machines)]
     mem_per = [[] for _ in range(n_machines)]
+    placement_rates, breach_rates = [], []
     for _ in range(n_episodes):
         if hasattr(baseline, "reset"):
             baseline.reset()
@@ -176,6 +225,9 @@ def evaluate_baseline(baseline, dataset_loader, n_episodes: int = 50) -> dict:
         for i in range(n_machines):
             cpu_per[i].append(u["cpu_per_machine"][i])
             mem_per[i].append(u["mem_per_machine"][i])
+        stats = env.episode_stats()
+        placement_rates.append(stats["placement_rate"])
+        breach_rates.append(stats["breach_rate"])
     return {
         "reward_mean": np.mean(rewards),
         "reward_std":  np.std(rewards),
@@ -183,6 +235,8 @@ def evaluate_baseline(baseline, dataset_loader, n_episodes: int = 50) -> dict:
         "mem_util":    np.mean(mem_utils),
         "cpu_per_machine": [np.mean(cpu_per[i]) for i in range(n_machines)],
         "mem_per_machine": [np.mean(mem_per[i]) for i in range(n_machines)],
+        "placement_rate_mean": float(np.mean(placement_rates)),
+        "breach_rate_mean":    float(np.mean(breach_rates)),
     }
 
 
@@ -207,7 +261,7 @@ def _warmup_with_teacher(agent: DQNAgent, env, teacher, warmup_episodes: int):
     finally:
         agent._freeze_epsilon = False
 
-def train():
+def train(seed=None):
 
     borg_train_loader = BorgDatasetLoader(
         file_path = "data/borg_trace_subset.csv",
@@ -221,8 +275,15 @@ def train():
         scale_mem = CONFIG["mem_capacity"]
     )
 
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+
     os.makedirs("checkpoints", exist_ok=True)
-    env = make_env(dataset_loader = borg_train_loader)
+    env = make_env(seed=seed, dataset_loader=borg_train_loader)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
@@ -300,14 +361,20 @@ def train():
                 CONFIG["eval_episodes"],
                 priority_guard_threshold=CONFIG["eval_priority_guard_threshold"],
             )
+            metrics_pure = evaluate_agent_pure(agent, borg_eval_loader, CONFIG["eval_episodes"])
             eval_rewards.append(metrics["reward_mean"])
             eval_steps.append(ep)
             cpu_per_str = "  ".join(f"M{i}={v:.0%}" for i, v in enumerate(metrics["cpu_per_machine"]))
             mem_per_str = "  ".join(f"M{i}={v:.0%}" for i, v in enumerate(metrics["mem_per_machine"]))
             print(
-                f"\n  [EVAL @ ep {ep}] "
+                f"\n  [EVAL @ ep {ep}] hybrid: "
                 f"Reward={metrics['reward_mean']:.1f} ± {metrics['reward_std']:.1f}  "
-                f"CPU util={metrics['cpu_util']:.1%}  MEM util={metrics['mem_util']:.1%}"
+                f"CPU={metrics['cpu_util']:.1%}  MEM={metrics['mem_util']:.1%}  "
+                f"PlaceRate={metrics['placement_rate_mean']:.1%}  BreachRate={metrics['breach_rate_mean']:.1%}"
+                f"\n  [EVAL @ ep {ep}] pure:   "
+                f"Reward={metrics_pure['reward_mean']:.1f} ± {metrics_pure['reward_std']:.1f}  "
+                f"CPU={metrics_pure['cpu_util']:.1%}  MEM={metrics_pure['mem_util']:.1%}  "
+                f"PlaceRate={metrics_pure['placement_rate_mean']:.1%}  BreachRate={metrics_pure['breach_rate_mean']:.1%}"
                 f"\n    CPU/machine: {cpu_per_str}"
                 f"\n    MEM/machine: {mem_per_str}\n"
             )
@@ -323,7 +390,9 @@ def train():
         50,
         priority_guard_threshold=CONFIG["eval_priority_guard_threshold"],
     )
-    _print_algo_result("DQN (ours)", final_dqn)
+    final_dqn_pure = evaluate_agent_pure(agent, borg_eval_loader, 50)
+    _print_algo_result("DQN (hybrid/teacher-assisted)", final_dqn)
+    _print_algo_result("DQN (pure)", final_dqn_pure)
 
     baselines = [
         FirstFitBaseline(),
@@ -338,19 +407,65 @@ def train():
         baseline_results[bl.name] = r
         _print_algo_result(bl.name, r)
 
-    _plot_results(ep_rewards, eval_steps, eval_rewards, final_dqn, baseline_results)
+    _plot_results(ep_rewards, eval_steps, eval_rewards, final_dqn, final_dqn_pure, baseline_results)
+
+    # --- Write experiment metadata JSON ---
+    def _json_default(x):
+        import numpy as _np
+        if isinstance(x, _np.floating):
+            return float(x)
+        if isinstance(x, _np.integer):
+            return int(x)
+        if isinstance(x, _np.ndarray):
+            return x.tolist()
+        return str(x)
+
+    try:
+        _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _git_result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True, text=True, cwd=_repo_root
+        )
+        git_commit = _git_result.stdout.strip() if _git_result.returncode == 0 else "unknown"
+    except Exception:
+        git_commit = "unknown"
+
+    eval_results = {"dqn_hybrid": final_dqn, "dqn_pure": final_dqn_pure}
+    for bl_name, bl_r in baseline_results.items():
+        eval_results[bl_name] = bl_r
+
+    metadata = {
+        "seed": seed,
+        "config": CONFIG,
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "git_commit": git_commit,
+        "eval_results": eval_results,
+        "n_episodes_trained": CONFIG["n_episodes"],
+    }
+
+    metadata_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "checkpoints", "experiment_metadata.json"
+    )
+    with open(metadata_path, "w") as _f:
+        json.dump(metadata, _f, indent=2, default=_json_default)
+    print("  Saved → checkpoints/experiment_metadata.json")
+
     print("\nTraining complete. Plots saved to training/plots/")
 
 
 def _print_algo_result(name, r):
     cpu_per_str = "  ".join(f"M{i}={v:.0%}" for i, v in enumerate(r["cpu_per_machine"]))
     mem_per_str = "  ".join(f"M{i}={v:.0%}" for i, v in enumerate(r["mem_per_machine"]))
-    print(f"  {name:<16} : reward={r['reward_mean']:.2f}  cpu={r['cpu_util']:.1%}  mem={r['mem_util']:.1%}")
-    print(f"  {'':16}   CPU/machine: {cpu_per_str}")
-    print(f"  {'':16}   MEM/machine: {mem_per_str}")
+    print(f"  {name:<30} : reward={r['reward_mean']:.2f}  cpu={r['cpu_util']:.1%}  mem={r['mem_util']:.1%}", end="")
+    if "placement_rate_mean" in r and "breach_rate_mean" in r:
+        print(f"  place={r['placement_rate_mean']:.1%}  breach={r['breach_rate_mean']:.1%}", end="")
+    print()
+    print(f"  {'':30}   CPU/machine: {cpu_per_str}")
+    print(f"  {'':30}   MEM/machine: {mem_per_str}")
 
 
-def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, baseline_results):
+def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, dqn_pure_result, baseline_results):
     os.makedirs("training/plots", exist_ok=True)
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
@@ -375,10 +490,10 @@ def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, baseline_res
     ax.grid(alpha=0.3)
 
     ax = axes[2]
-    names = ["DQN"] + list(baseline_results.keys())
-    means = [dqn_result["reward_mean"]] + [v["reward_mean"] for v in baseline_results.values()]
-    stds  = [dqn_result["reward_std"]]  + [v["reward_std"]  for v in baseline_results.values()]
-    colors = ["#2196F3"] + ["#78909C"] * len(baseline_results)
+    names = ["DQN (hybrid)", "DQN (pure)"] + list(baseline_results.keys())
+    means = [dqn_result["reward_mean"], dqn_pure_result["reward_mean"]] + [v["reward_mean"] for v in baseline_results.values()]
+    stds  = [dqn_result["reward_std"],  dqn_pure_result["reward_std"]]  + [v["reward_std"]  for v in baseline_results.values()]
+    colors = ["#2196F3", "#42A5F5"] + ["#78909C"] * len(baseline_results)
     bars = ax.bar(names, means, yerr=stds, capsize=5, color=colors, edgecolor="white")
     ax.set_ylabel("Mean Episode Reward")
     ax.set_title("DQN vs Baselines")
@@ -394,4 +509,4 @@ def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, baseline_res
 
 
 if __name__ == "__main__":
-    train()
+    train(seed=42)
