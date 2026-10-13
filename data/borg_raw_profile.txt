@@ -1,0 +1,68 @@
+Total rows: 405894
+Event counts:
+event
+FINISH            92867
+FAIL              92678
+ENABLE            75907
+SCHEDULE          69104
+LOST              59515
+EVICT             14756
+KILL                951
+UPDATE_PENDING      111
+QUEUE                 4
+UPDATE_RUNNING        1
+Name: count, dtype: int64
+
+SCHEDULE rows: 69104
+Parseable cpu: 69104
+Missing/unparseable cpu: 0
+Zero cpu: 104
+Zero mem: 0
+
+After filtering zero/missing: 69000
+
+CPU raw fraction stats:
+count    69000.000000
+mean         0.029710
+std          0.056028
+min          0.000220
+50%          0.010300
+90%          0.072998
+95%          0.104736
+99%          0.263672
+max          0.583008
+Name: cpu_raw, dtype: float64
+
+MEM raw fraction stats:
+count    69000.000000
+mean         0.012907
+std          0.025512
+min          0.000255
+50%          0.003906
+90%          0.033264
+95%          0.074219
+99%          0.101929
+max          0.263184
+Name: mem_raw, dtype: float64
+
+Priority value_counts (top 15):
+priority
+0        777
+25      1728
+101     1499
+103    22295
+105    13746
+107     2720
+114      117
+115      722
+116     6311
+118     3620
+119      181
+200    13926
+360     1358
+Name: count, dtype: int64
+
+CPU scaled x16 stats (p50,p95,p99,max):
+ p50=0.1648 p95=1.6758 p99=4.2188 max=9.3281
+MEM scaled x64 stats (p50,p95,p99,max):
+ p50=0.2500 p95=4.7500 p99=6.5234 max=16.8438

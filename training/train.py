@@ -26,6 +26,10 @@ from baselines.heuristics import FirstFitBaseline, BestFitBaseline, GreedyPriori
 from utils.logger import EpisodeLogger
 
 from utils.data_loader import BorgDatasetLoader
+# KaggleBorgLoader is imported lazily inside train() when data/processed/borg_jobs.csv exists.
+# Do NOT add a top-level import here — teammates without the processed dataset would get an
+# ImportError before train() is even called. The lazy import pattern is intentional; see
+# docs/AI_CONTEXT_KAGGLE_UPDATED.md §3 for details.
 
 CONFIG = {
     "n_machines": 4,
@@ -263,13 +267,29 @@ def _warmup_with_teacher(agent: DQNAgent, env, teacher, warmup_episodes: int):
 
 def train(seed=None, eval_csv=None):
 
-    borg_train_loader = BorgDatasetLoader(
-        file_path = "data/borg_trace_subset.csv",
-        scale_cpu = CONFIG["cpu_capacity"],
-        scale_mem = CONFIG["mem_capacity"]
+    _KAGGLE_PROCESSED = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "processed", "borg_jobs.csv"
     )
+    _use_kaggle = os.path.exists(_KAGGLE_PROCESSED)
+    if _use_kaggle:
+        print(f"[train] Using KaggleBorgLoader from {_KAGGLE_PROCESSED}")
+    else:
+        print("[train] data/processed/borg_jobs.csv not found — falling back to synthetic BorgDatasetLoader")
 
-    if eval_csv is not None:
+    if _use_kaggle:
+        from utils.kaggle_borg_loader import KaggleBorgLoader  # lazy: only when processed file present
+        borg_train_loader = KaggleBorgLoader(csv_path=_KAGGLE_PROCESSED)
+    else:
+        borg_train_loader = BorgDatasetLoader(
+            file_path="data/borg_trace_subset.csv",
+            scale_cpu=CONFIG["cpu_capacity"],
+            scale_mem=CONFIG["mem_capacity"]
+        )
+
+    if _use_kaggle:
+        borg_eval_loader = KaggleBorgLoader(csv_path=_KAGGLE_PROCESSED)
+    elif eval_csv is not None:
         borg_eval_loader = BorgDatasetLoader(
             file_path=eval_csv,
             scale_cpu=CONFIG["cpu_capacity"],
