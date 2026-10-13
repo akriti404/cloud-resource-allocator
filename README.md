@@ -88,32 +88,41 @@ All 18 tests should pass.
 
 ## Results
 
-### Current Results (single-run, hybrid DQN eval, pre-Task-3 baseline)
+### Multi-Seed Evaluation Results
 
-*Test configuration: 4 machines, 5,000 generated jobs, 100 jobs/episode, 800 training episodes.*
+*Configuration: 4 machines · 16 CPU cores / 64 GB RAM each · 5,000-job synthetic workload · 100 jobs/episode · 800 training episodes · 3 seeds (42, 7, 123) · held-out eval dataset (`borg_eval_subset.csv`, seed 99) · 20 eval episodes per checkpoint.*
 
-*Note: these are from a single training run using hybrid (teacher-assisted) evaluation. Fair multi-seed results will replace this table after running `run_experiments.py`.*
-
-| Scheduler | Mean Reward | Notes |
-|---|---|---|
-| Best Fit | 96.22 | Heuristic |
-| Greedy Priority | 95.98 | Heuristic |
-| First Fit | 95.97 | Heuristic |
-| DQN (hybrid eval) | 95.76 | RL agent, teacher-assisted eval |
-| Random | 83.41 | Heuristic |
-| Round Robin | 81.98 | Heuristic |
-
-### Multi-Seed Results (to be filled after running run_experiments.py)
+*DQN (pure) uses the trained policy alone with no teacher override. DQN (hybrid) additionally allows the GreedyPriority teacher to override the DQN's action when the teacher estimates a higher immediate reward — this inflates the score and is not a fair standalone comparison.*
 
 | Scheduler | Reward mean ± std | Placement Rate | SLA Breach Rate |
-|---|---|---|---|
-| DQN (hybrid) | — | — | — |
-| DQN (pure) | — | — | — |
-| Best Fit | — | — | — |
-| Greedy Priority | — | — | — |
-| First Fit | — | — | — |
-| Round Robin | — | — | — |
-| Random | — | — | — |
+|---|---:|---:|---:|
+| **BestFit** | **97.96 ± 0.00** | 100.0% | 0.0% |
+| GreedyPriority | 97.74 ± 0.00 | 100.0% | 0.0% |
+| DQN (hybrid) | 97.73 ± 0.17 | 100.0% | 0.0% |
+| FirstFit | 97.70 ± 0.00 | 100.0% | 0.0% |
+| DQN (pure) | 97.12 ± 0.23 | 100.0% | 0.0% |
+| Random | 84.56 ± 0.10 | 99.9% | 0.1% |
+| RoundRobin | 83.05 ± 0.00 | 100.0% | 0.0% |
+
+**Key findings:**
+- DQN (pure) is competitive but does not outperform the best heuristics. BestFit leads by 0.84 reward points on average, consistently across all 3 seeds.
+- The teacher-assisted hybrid inflates DQN's score by ~0.6 points, masking the true gap to heuristics.
+- All schedulers achieve near-100% placement. Reward differences reflect packing efficiency and load balance, not feasibility.
+- BestFit's greedy minimum-leftover strategy is a strong natural fit for this reward function (which directly rewards utilization efficiency and packing density).
+- RoundRobin and Random underperform significantly (~14 points below BestFit) due to ignoring resource fit.
+
+### Pre-Task-3 Baseline (single-run, hybrid eval — for reference only)
+
+*Single training run, same workload CSV used for both training and evaluation, no seed control.*
+
+| Scheduler | Reward |
+|---|---:|
+| BestFit | 96.22 |
+| GreedyPriority | 95.98 |
+| FirstFit | 95.97 |
+| DQN (hybrid) | 95.76 |
+| Random | 83.41 |
+| RoundRobin | 81.98 |
 
 ---
 

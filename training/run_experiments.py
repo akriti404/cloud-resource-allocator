@@ -335,8 +335,8 @@ def main():
             original_n_episodes = train_module.CONFIG["n_episodes"]
             original_eval_every = train_module.CONFIG["eval_every"]
             # For development/testing runs. Change to 800/50 for full production runs.
-            train_module.CONFIG["n_episodes"] = 100
-            train_module.CONFIG["eval_every"] = 25
+            train_module.CONFIG["n_episodes"] = 800
+            train_module.CONFIG["eval_every"] = 50
             try:
                 train_module.train(seed=s, eval_csv="data/borg_eval_subset.csv")
             finally:
