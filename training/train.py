@@ -261,19 +261,26 @@ def _warmup_with_teacher(agent: DQNAgent, env, teacher, warmup_episodes: int):
     finally:
         agent._freeze_epsilon = False
 
-def train(seed=None):
+def train(seed=None, eval_csv=None):
 
     borg_train_loader = BorgDatasetLoader(
         file_path = "data/borg_trace_subset.csv",
         scale_cpu = CONFIG["cpu_capacity"],
         scale_mem = CONFIG["mem_capacity"]
     )
-    
-    borg_eval_loader = BorgDatasetLoader(
-        file_path = "data/borg_trace_subset.csv",
-        scale_cpu = CONFIG["cpu_capacity"],
-        scale_mem = CONFIG["mem_capacity"]
-    )
+
+    if eval_csv is not None:
+        borg_eval_loader = BorgDatasetLoader(
+            file_path=eval_csv,
+            scale_cpu=CONFIG["cpu_capacity"],
+            scale_mem=CONFIG["mem_capacity"]
+        )
+    else:
+        borg_eval_loader = BorgDatasetLoader(
+            file_path="data/borg_trace_subset.csv",
+            scale_cpu=CONFIG["cpu_capacity"],
+            scale_mem=CONFIG["mem_capacity"]
+        )
 
     if seed is not None:
         random.seed(seed)
@@ -472,7 +479,7 @@ def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, dqn_pure_res
     fig.suptitle("DQN Resource Allocation Agent", fontsize=14, fontweight="bold")
 
     ax = axes[0]
-    window = 50
+    window = min(50, len(ep_rewards))
     smoothed = np.convolve(ep_rewards, np.ones(window) / window, mode="valid")
     ax.plot(ep_rewards, alpha=0.2, color="steelblue", label="Raw")
     ax.plot(range(window - 1, len(ep_rewards)), smoothed, color="steelblue", label=f"Smoothed ({window}ep)")
@@ -509,4 +516,5 @@ def _plot_results(ep_rewards, eval_steps, eval_rewards, dqn_result, dqn_pure_res
 
 
 if __name__ == "__main__":
-    train(seed=42)
+    _eval_csv = 'data/borg_eval_subset.csv' if os.path.exists('data/borg_eval_subset.csv') else None
+    train(seed=42, eval_csv=_eval_csv)

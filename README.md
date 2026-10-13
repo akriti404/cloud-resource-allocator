@@ -1,246 +1,128 @@
 # Cloud Resource Allocator
 
-A Deep Reinforcement Learning-based framework for intelligent job placement in a simulated cloud computing environment.
+A deep reinforcement learning framework for intelligent job placement in a simulated cloud environment. The project models resource allocation as a sequential decision-making problem: for each incoming synthetic Borg-style job, an RL agent observes current machine states and selects where to place the job. The primary agent is a Dueling DQN with Double DQN, Prioritized Experience Replay, and heuristic-guided exploration. Performance is compared against five classical baseline schedulers across multiple seeds to produce statistically grounded results.
 
-The project models cloud resource allocation as a sequential decision-making problem. For each incoming job, an RL agent observes the current state of the available machines and selects a suitable machine for execution.
-
-The current implementation uses a **Dueling Deep Q-Network (Dueling DQN)** combined with Double DQN, Prioritized Experience Replay, feasibility-aware action selection, reward normalization, and heuristic-guided exploration.
+The workload is fully synthetic (Borg-style log-normal distributions). Due to deliberate cluster over-provisioning relative to job arrival rate, utilization is intentionally low (~11–12% CPU/memory) — this is mathematically expected and not a bug. See the architecture summary and known limitations below.
 
 ---
 
-## Overview
+## Architecture Summary
 
-Efficient resource allocation is an important problem in cloud computing. Incoming workloads need to be assigned to available machines while considering multiple factors such as:
-
-- CPU availability
-- Memory availability
-- Job priority
-- Job duration
-- Resource utilization
-- Load distribution
-- Allocation feasibility
-
-Traditional scheduling algorithms such as First Fit and Best Fit rely on predefined rules. This project explores whether a reinforcement learning agent can learn an effective allocation policy through repeated interaction with a simulated cloud environment.
-
-### Workflow
-
-```text
-Workload
-   │
-   ▼
-Incoming Job
-   │
-   ▼
-Current Cluster State
-   │
-   ▼
-Dueling DQN Agent
-   │
-   ▼
-Select Machine
-   │
-   ▼
-Allocate Resources
-   │
-   ▼
-Calculate Reward
-   │
-   ▼
-Store Experience
-   │
-   ▼
-Train DQN
-```
+| Module | Role |
+|---|---|
+| `env/resource_env.py` | Gymnasium-based cluster scheduling environment: 4 machines, 16 CPU cores / 64 GB RAM each, 16-dim observation, discrete action per machine |
+| `env/server.py`, `env/task.py` | **Legacy unused files** — not part of the active system |
+| `agents/dqn_agent.py` | Dueling DQN + Double DQN + Prioritized Experience Replay + target network |
+| `baselines/heuristics.py` | FirstFit, BestFit, GreedyPriority, RoundRobin, Random schedulers |
+| `training/train.py` | Main training loop (800 ep, seed=42 default), evaluation functions, plots, metadata JSON |
+| `training/run_experiments.py` | Multi-seed experiment runner: summary CSV, bar chart, per-seed checkpoints |
+| `utils/data_loader.py` | `BorgDatasetLoader` — loads CSV, scales resources to absolute cluster units, wraps around |
+| `utils/replay_buffer.py` | Prioritized replay buffer |
+| `utils/logger.py` | Episode logger |
+| `generate_dummy_trace.py` | Synthetic workload generator (log-normal CPU/mem, discrete priority, log-normal duration) |
 
 ---
 
-## Problem Formulation
+## Setup
 
-The scheduling problem is formulated as a reinforcement learning problem. At every time step:
-
-1. A job arrives.
-2. The agent observes the current cluster state.
-3. The agent selects a machine.
-4. The job is allocated if the placement is feasible.
-5. The environment updates resource availability.
-6. A reward is calculated.
-7. The transition is stored for learning.
-
-The objective is to learn a policy that makes effective resource allocation decisions over a sequence of jobs.
-
----
-
-## Reinforcement Learning Setup
-
-### Agent
-The learning agent is a **Dueling Deep Q-Network (DQN)**.
-
-### Environment
-The environment represents a cluster containing multiple machines with limited CPU and memory resources.
-
-### State
-The state represents the current condition of the cluster along with information about the incoming job. For the default four-machine configuration, the observation has 16 dimensions and contains information related to:
-- Available CPU on each machine
-- Available memory on each machine
-- Active workload information
-- Current job characteristics
-- Episode progress
-
-### Actions
-Each action corresponds to selecting one of the available machines. For four machines:
-- `Action 0` $\rightarrow$ Machine 0
-- `Action 1` $\rightarrow$ Machine 1
-- `Action 2` $\rightarrow$ Machine 2
-- `Action 3` $\rightarrow$ Machine 3
-
-### Reward
-The reward function encourages desirable scheduling decisions while penalizing poor or infeasible allocations, considering:
-- Successful resource allocation
-- Job priority
-- Resource efficiency
-- SLA/resource violations
-- Resource packing
-- Load distribution
-
----
-
-## Deep Learning Approach
-
-The project uses a **Dueling DQN architecture** implemented with PyTorch. Instead of storing Q-values in a table, a neural network learns to approximate the Q-function:
-
-```text
-                  State
-                    │
-                    ▼
-          Fully Connected Layer
-                    │
-                    ▼
-                  ReLU
-                    │
-                    ▼
-          Fully Connected Layer
-                    │
-           ┌────────┴────────┐
-           ▼                 ▼
-     Value Stream    Advantage Stream
-           │                 │
-           ▼                 ▼
-          V(s)             A(s,a)
-           │                 │
-           └────────┬────────┘
-                    │
-                    ▼
-                  Q(s,a)
-```
-
-The Dueling architecture separates the estimation of:
-- **State value ($V(s)$):** How valuable the current state is.
-- **Action advantage ($A(s,a)$):** How much better one action is compared with other actions.
-
----
-
-## DQN Enhancements
-
-The implementation combines several established Deep RL techniques:
-
-- **Dueling DQN:** Separates state-value and action-advantage estimation to provide a more structured Q-value representation.
-- **Double DQN:** Uses the online network to select the next action and the target network to evaluate it, reducing Q-value overestimation.
-- **Prioritized Experience Replay:** Experiences with larger temporal-difference errors receive higher priority during replay, allowing the agent to learn more frequently from informative transitions.
-- **Target Network:** A separate target network is maintained to provide more stable learning targets, updated via soft/Polyak updates.
-- **Feasibility-Aware Action Selection:** Masks actions that cannot accommodate the current job's resource requirements before selection.
-- **Reward Normalization:** Uses running reward statistics to normalize rewards and stabilize training.
-- **Heuristic-Guided Exploration:** Applies a Greedy Priority heuristic early in training to guide initial exploration, gradually decaying as training progresses.
-
----
-
-## Workload Generation
-
-The current repository includes a synthetic workload generator:
 ```bash
-python generate_dummy_trace.py
-```
-
-It creates jobs containing CPU requirements, memory requirements, priorities, and durations, saving the output to:
-```text
-data/borg_trace_subset.csv
-```
-> **Note:** The default experiment uses a synthetic Borg-style workload and should not be interpreted as the original Google production Borg trace.
-
----
-
-## Baseline Scheduling Algorithms
-
-The learned DQN policy is compared with several conventional scheduling strategies:
-
-- **First Fit:** Assigns a job to the first machine that can accommodate it.
-- **Best Fit:** Places the job on a machine where remaining resources are used efficiently.
-- **Greedy Priority:** Uses job priority and resource availability for placement decisions.
-- **Round Robin:** Cycles through machines sequentially.
-- **Random:** Selects a feasible machine randomly.
-
----
-
-## Getting Started
-
-### 1. Create a Virtual Environment
-```bash
-# Windows (PowerShell)
+# Windows
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-
-# macOS / Linux
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### 2. Install Dependencies
-```bash
 pip install -r requirements.txt
-```
 
-### 3. Generate the Workload
-```bash
+# Generate training dataset
 python generate_dummy_trace.py
+
+# Generate held-out evaluation dataset
+python generate_dummy_trace.py --seed 99 --output data/borg_eval_subset.csv
 ```
 
-### 4. Train the DQN
+---
+
+## Running Training
+
 ```bash
 python training/train.py
 ```
 
----
+Trains for 800 episodes (seed=42 by default). Uses `data/borg_eval_subset.csv` for evaluation if it exists, otherwise falls back to `data/borg_trace_subset.csv`.
 
-## Evaluation
-
-The trained DQN is evaluated against the baseline scheduling strategies, tracking mean episode reward, CPU/memory utilization, and per-machine metrics.
-
-- **Training & Evaluation Plots:** `training/plots/`
-- **Model Checkpoints:** `checkpoints/`
-
-### Current Baseline Results
-*Test Configuration: 4 machines, 5000 generated jobs, 100 jobs/episode, 800 training episodes (CPU).*
-
-| Scheduler | Reward |
-| :--- | ---: |
-| **Best Fit** | 96.22 |
-| **Greedy Priority** | 95.98 |
-| **First Fit** | 95.97 |
-| **DQN** | **95.76** |
-| **Random** | 83.41 |
-| **Round Robin** | 81.98 |
-
-> **Takeaway:** The initial experiment shows that the DQN is competitive with heuristic methods but does not consistently outperform the strongest heuristic baselines on the current synthetic workload. This serves as our foundational baseline.
+Writes:
+- `checkpoints/dqn_resource.pt`
+- `checkpoints/experiment_metadata.json`
+- `training/plots/results.png`
 
 ---
 
-## Research Direction
+## Running Multi-Seed Experiments
 
-Planned experiments to improve the resource allocation policy include:
-- More challenging workload generation and higher resource utilization scenarios
-- Improved reward design and state representation
-- DQN hyperparameter optimization and variant comparisons
-- Multi-seed evaluations and ablation studies
-- Generalization testing on unseen workloads
+```bash
+python training/run_experiments.py
+
+# or with custom seeds:
+python training/run_experiments.py --seeds 42 7 123
+
+# or skip training and re-evaluate an existing checkpoint:
+python training/run_experiments.py --eval-only
+```
+
+Produces:
+- `training/results/multi_seed_summary.csv`
+- `training/plots/multi_seed_results.png`
+- `checkpoints/dqn_seed_{seed}.pt` (one per seed)
+
+> **Note:** By default `run_experiments.py` uses **100 episodes per seed** for speed. To run full production experiments, edit the `n_episodes` override in the script from `100` to `800` (and `eval_every` from `25` to `50`).
+
+---
+
+## Running Tests
+
+```bash
+.\venv\Scripts\python.exe -m unittest discover tests -v
+```
+
+All 18 tests should pass.
+
+---
+
+## Results
+
+### Current Results (single-run, hybrid DQN eval, pre-Task-3 baseline)
+
+*Test configuration: 4 machines, 5,000 generated jobs, 100 jobs/episode, 800 training episodes.*
+
+*Note: these are from a single training run using hybrid (teacher-assisted) evaluation. Fair multi-seed results will replace this table after running `run_experiments.py`.*
+
+| Scheduler | Mean Reward | Notes |
+|---|---|---|
+| Best Fit | 96.22 | Heuristic |
+| Greedy Priority | 95.98 | Heuristic |
+| First Fit | 95.97 | Heuristic |
+| DQN (hybrid eval) | 95.76 | RL agent, teacher-assisted eval |
+| Random | 83.41 | Heuristic |
+| Round Robin | 81.98 | Heuristic |
+
+### Multi-Seed Results (to be filled after running run_experiments.py)
+
+| Scheduler | Reward mean ± std | Placement Rate | SLA Breach Rate |
+|---|---|---|---|
+| DQN (hybrid) | — | — | — |
+| DQN (pure) | — | — | — |
+| Best Fit | — | — | — |
+| Greedy Priority | — | — | — |
+| First Fit | — | — | — |
+| Round Robin | — | — | — |
+| Random | — | — | — |
+
+---
+
+## Known Limitations
+
+- **Synthetic workload only.** Low utilization (~11–12% CPU/memory) is mathematically expected given cluster over-provisioning relative to job arrival rate — not a scheduler deficiency. See `docs/TASK1_AUDIT_RUOTH.md` for the full Little's Law derivation.
+- **Single-run results do not have confidence intervals.** Use `run_experiments.py` for multi-seed evaluation with mean ± std.
+- **Hybrid vs pure DQN distinction.** Hybrid eval uses a GreedyPriority teacher to override low-confidence DQN decisions; pure eval uses the DQN alone. The hybrid result is optimistic relative to real deployment.
+- **DQN does NOT consistently outperform the best heuristic baselines** on this workload. BestFit and GreedyPriority are strong competitors.
 
 ---
 
@@ -255,26 +137,39 @@ cloud-resource-allocator/
 ├── baselines/
 │   └── heuristics.py
 │
-├── data/
-│   └── borg_trace_subset.csv
+├── checkpoints/            ← model checkpoints (not in git)
+│
+├── data/                   ← generated CSVs (not in git)
+│   ├── borg_trace_subset.csv
+│   └── borg_eval_subset.csv
+│
+├── docs/
+│   └── TASK1_AUDIT_RUOTH.md
 │
 ├── env/
-│   ├── resource_env.py
-│   ├── server.py
-│   └── task.py
+│   ├── resource_env.py     ← active environment
+│   ├── server.py           ← legacy, unused
+│   └── task.py             ← legacy, unused
+│
+├── tests/
+│   ├── test_workload.py
+│   ├── test_environment.py
+│   ├── test_evaluation.py
+│   └── test_dqn_agent.py
 │
 ├── training/
 │   ├── train.py
-│   └── plots/
+│   ├── run_experiments.py
+│   ├── plots/              ← generated plots (not in git)
+│   └── results/            ← multi-seed CSV (not in git)
 │
 ├── utils/
-│   ├── config.py
-│   └── data_loader.py
+│   ├── data_loader.py
+│   ├── replay_buffer.py
+│   └── logger.py
 │
-├── checkpoints/
 ├── generate_dummy_trace.py
 ├── requirements.txt
-├── .gitignore
 └── README.md
 ```
 
@@ -282,30 +177,14 @@ cloud-resource-allocator/
 
 ## Technologies Used
 
-- Python
-- PyTorch
-- Gymnasium
-- NumPy
-- Pandas
-- Matplotlib
+- Python, PyTorch, Gymnasium, NumPy, Pandas, Matplotlib
 
 ---
 
-## Development Status
+## Team / Task Ownership
 
-### Implemented
-- [x] Cloud resource allocation environment
-- [x] Synthetic workload generation
-- [x] Dueling DQN agent & Double DQN
-- [x] Prioritized Experience Replay
-- [x] Target network with soft updates
-- [x] Feasibility-aware action selection
-- [x] Reward normalization & Heuristic-guided exploration
-- [x] Classical scheduling baselines
-- [x] Training pipeline & Evaluation visualization
-
-### Planned
-- [ ] Improved workload scenarios & higher-load experiments
-- [ ] Reward-function & state representation refinement
-- [ ] DQN variant comparison & multi-seed evaluation
-- [ ] Ablation experiments & unseen-workload evaluation
+| Task | Description | Owner |
+|---|---|---|
+| Task 1 | Workload, Environment, Reward | Ruoth |
+| Task 2 | DQN Agent, Training Pipeline | Anamika |
+| Task 3 | Evaluation, Reproducibility, Integration, Documentation | Akriti |
