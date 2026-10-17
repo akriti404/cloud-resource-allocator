@@ -478,6 +478,17 @@ def train(seed=None, eval_csv=None):
         json.dump(metadata, _f, indent=2, default=_json_default)
     print("  Saved → checkpoints/experiment_metadata.json")
 
+    # Also write a seed-specific metadata file so multi-seed runs can
+    # load a completed seed's results without retraining it.
+    if seed is not None:
+        seed_metadata_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "checkpoints", f"experiment_metadata_seed_{seed}.json"
+        )
+        with open(seed_metadata_path, "w") as _f:
+            json.dump(metadata, _f, indent=2, default=_json_default)
+        print(f"  Saved -> checkpoints/experiment_metadata_seed_{seed}.json")
+
     print("\nTraining complete. Plots saved to training/plots/")
 
 

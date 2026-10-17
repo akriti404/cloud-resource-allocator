@@ -306,6 +306,16 @@ def main():
         action="store_true",
         help="Skip training; re-evaluate existing checkpoint for each seed.",
     )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip training for a seed if both checkpoints/dqn_seed_{seed}.pt and "
+            "checkpoints/experiment_metadata_seed_{seed}.json already exist. "
+            "The saved metadata is validated against the effective training config "
+            "before use."
+        ),
+    )
     args = parser.parse_args()
 
     os.makedirs(_RESULTS_DIR, exist_ok=True)
@@ -336,6 +346,78 @@ def main():
             print(f"\n{'='*60}")
             print(f"  Seed {s}: starting training run")
             print(f"{'='*60}")
+
+            # -------------------------------------------------------------- #
+            # --skip-existing: validate and reuse saved per-seed results      #
+            # -------------------------------------------------------------- #
+            seed_ckpt_path = f"checkpoints/dqn_seed_{s}.pt"
+            seed_meta_path = f"checkpoints/experiment_metadata_seed_{s}.json"
+            if args.skip_existing:
+                ckpt_ok = os.path.exists(seed_ckpt_path)
+                meta_ok = os.path.exists(seed_meta_path)
+                if ckpt_ok and meta_ok:
+                    print(f"  [skip-existing] Found checkpoint and metadata for seed {s}.")
+                    with open(seed_meta_path) as _f:
+                        saved_meta = json.load(_f)
+
+                    # Validate: seed field must match
+                    if saved_meta.get("seed") != s:
+                        raise RuntimeError(
+                            f"Seed mismatch in {seed_meta_path}: "
+                            f"file contains seed={saved_meta.get('seed')}, expected {s}. "
+                            "Delete the stale file and re-run without --skip-existing."
+                        )
+
+                    # Validate: compare against the effective config this runner
+                    # uses for training (n_episodes and eval_every are patched to
+                    # 800 and 50 before train() is called, so we must include them
+                    # here rather than reading train_module.CONFIG before the patch).
+                    effective_cfg = dict(train_module.CONFIG)
+                    effective_cfg["n_episodes"] = 800
+                    effective_cfg["eval_every"] = 50
+                    saved_cfg = saved_meta.get("config", {})
+                    mismatches = [
+                        k for k, v in effective_cfg.items()
+                        if k != "save_path" and saved_cfg.get(k) != v
+                    ]
+                    if mismatches:
+                        raise RuntimeError(
+                            f"Config mismatch in {seed_meta_path} for seed {s}. "
+                            f"Differing keys: {mismatches}. "
+                            "Delete the stale file and re-run without --skip-existing."
+                        )
+
+                    # Validate: eval_results must exist, be a dict, and contain
+                    # all expected scheduler keys each mapping to a non-empty dict.
+                    eval_results = saved_meta.get("eval_results")
+                    if not isinstance(eval_results, dict):
+                        raise RuntimeError(
+                            f"eval_results missing or not a dict in {seed_meta_path}."
+                        )
+                    missing_keys = [
+                        k for k in _SCHEDULERS
+                        if k not in eval_results
+                        or not isinstance(eval_results[k], dict)
+                        or len(eval_results[k]) == 0
+                    ]
+                    if missing_keys:
+                        raise RuntimeError(
+                            f"eval_results in {seed_meta_path} is missing or empty "
+                            f"for schedulers: {missing_keys}. "
+                            "Delete the stale file and re-run without --skip-existing."
+                        )
+
+                    print(f"  [skip-existing] Validation passed. Using saved results for seed {s}.")
+                    all_eval_results.append(eval_results)
+                    continue   # skip training for this seed
+                else:
+                    missing = []
+                    if not ckpt_ok:
+                        missing.append(seed_ckpt_path)
+                    if not meta_ok:
+                        missing.append(seed_meta_path)
+                    print(f"  [skip-existing] Missing files for seed {s}: {missing}. Training normally.")
+            # -------------------------------------------------------------- #
 
             # Patch CONFIG for a shorter run (edit here for full production runs)
             original_n_episodes = train_module.CONFIG["n_episodes"]
