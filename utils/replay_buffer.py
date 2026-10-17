@@ -108,12 +108,14 @@ class PrioritizedReplayBuffer:
             np.array(is_weights, dtype=np.float32),
         )
 
+   
     def update_priorities(self, indices, td_errors):
         """Update priorities based on absolute TD errors."""
         for idx, td_err in zip(indices, td_errors):
-            priority = (abs(td_err) + 1e-5) ** self.alpha
-            self._max_priority = max(self._max_priority, priority)
+            raw_priority = abs(float(td_err)) + 1e-5
+            priority = raw_priority ** self.alpha
+            self._max_priority = max(self._max_priority, raw_priority)
             self.tree.update(int(idx), priority)
-
+ 
     def __len__(self):
         return self.tree.n_entries

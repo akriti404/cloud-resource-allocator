@@ -180,5 +180,99 @@ class TestEpsilonWarmupFreeze(unittest.TestCase):
         )
 
 
+class TestCheckpointRoundTrip(unittest.TestCase):
+
+    def test_max_priority_survives_checkpoint_roundtrip(self):
+        """
+        _max_priority > 1.0 must be saved in the checkpoint and restored
+        correctly on load. Without the fix, load() left _max_priority at 1.0
+        (the PrioritizedReplayBuffer constructor default), causing new
+        transitions after a resume to receive an incorrectly low initial
+        priority.
+
+        Uses a temporary file so no real checkpoint is overwritten.
+        """
+        import tempfile
+        import os
+
+        agent = _make_agent()
+
+        # Simulate seeing a large TD error so _max_priority rises above 1.0
+        _push_transitions(agent, n=8)
+        large_td_error = 7.5
+        leaf_index = agent.memory.tree.capacity - 1  # first leaf
+        agent.memory.update_priorities(
+            np.array([leaf_index], dtype=np.int64),
+            np.array([large_td_error]),
+        )
+        expected_max_priority = abs(large_td_error) + 1e-5
+        self.assertAlmostEqual(
+            agent.memory._max_priority, expected_max_priority, places=5,
+            msg="Pre-condition: _max_priority must reflect the large TD error",
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            # Save and reload into a fresh agent
+            agent.save(tmp_path)
+
+            fresh_agent = _make_agent()
+            # fresh_agent._max_priority starts at 1.0 by default
+            self.assertAlmostEqual(fresh_agent.memory._max_priority, 1.0, places=5)
+
+            fresh_agent.load(tmp_path)
+
+            self.assertAlmostEqual(
+                fresh_agent.memory._max_priority, expected_max_priority, places=5,
+                msg=(
+                    "_max_priority must be restored from checkpoint; "
+                    f"expected {expected_max_priority}, got {fresh_agent.memory._max_priority}"
+                ),
+            )
+        finally:
+            os.unlink(tmp_path)
+
+    def test_load_older_checkpoint_without_max_priority_keeps_default(self):
+        """
+        Loading a checkpoint that lacks the 'max_priority' key (e.g. saved
+        before this fix) must not raise and must leave _max_priority at its
+        existing value (the constructor default 1.0).
+        """
+        import tempfile
+        import os
+        import torch
+
+        agent = _make_agent()
+
+        # Build a checkpoint dict that deliberately omits 'max_priority'
+        legacy_ckpt = {
+            "online":     agent.online_net.state_dict(),
+            "target":     agent.target_net.state_dict(),
+            "optimizer":  agent.optimizer.state_dict(),
+            "epsilon":    agent.epsilon,
+            "steps":      agent.steps,
+            "normalizer": agent.reward_normalizer.state_dict(),
+            # 'max_priority' intentionally absent
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            torch.save(legacy_ckpt, tmp_path)
+
+            fresh_agent = _make_agent()
+            fresh_agent.load(tmp_path)   # must not raise
+
+            self.assertAlmostEqual(
+                fresh_agent.memory._max_priority, 1.0, places=5,
+                msg="Legacy checkpoint: _max_priority must remain at default 1.0",
+            )
+        finally:
+            os.unlink(tmp_path)
+
+
 if __name__ == "__main__":
     unittest.main()

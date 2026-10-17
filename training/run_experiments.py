@@ -322,6 +322,12 @@ def main():
         eval_results = _run_eval_only()
         # Use the same result for each seed (checkpoint is fixed)
         all_eval_results = [eval_results] * len(args.seeds)
+        print(
+            "\n[WARNING] --eval-only repeats a single checkpoint evaluation across "
+            f"{len(args.seeds)} seed slot(s). The aggregated reward_std and other "
+            "variance metrics will be 0.0 and do NOT reflect training variance across "
+            "seeds. Run without --eval-only to obtain meaningful per-seed variance."
+        )
     else:
         # ------------------------------------------------------------------ #
         # Training mode: run train() for each seed                            #

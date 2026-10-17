@@ -257,12 +257,16 @@ class DQNAgent:
     def save(self, path: str):
         torch.save(
             {
-                "online":     self.online_net.state_dict(),
-                "target":     self.target_net.state_dict(),
-                "optimizer":  self.optimizer.state_dict(),
-                "epsilon":    self.epsilon,
-                "steps":      self.steps,
-                "normalizer": self.reward_normalizer.state_dict(),
+                "online":       self.online_net.state_dict(),
+                "target":       self.target_net.state_dict(),
+                "optimizer":    self.optimizer.state_dict(),
+                "epsilon":      self.epsilon,
+                "steps":        self.steps,
+                "normalizer":   self.reward_normalizer.state_dict(),
+                # PER max-priority: restored on load so new transitions after a
+                # resume receive the correct initial priority (>= highest seen
+                # TD error), not the buffer's constructor default of 1.0.
+                "max_priority": self.memory._max_priority,
             },
             path,
         )
@@ -277,4 +281,7 @@ class DQNAgent:
         self.steps   = ckpt["steps"]
         if "normalizer" in ckpt:
             self.reward_normalizer.load_state_dict(ckpt["normalizer"])
+        # Backward-compatible: older checkpoints lack this key; keep default.
+        if "max_priority" in ckpt:
+            self.memory._max_priority = ckpt["max_priority"]
         logger.info("Loaded checkpoint ← %s", path)
